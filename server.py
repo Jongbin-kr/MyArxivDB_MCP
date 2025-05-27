@@ -17,7 +17,7 @@ load_dotenv()
 PINECONCE_API_KEY = os.getenv("PINECONE_API_KEY")
 
 # Create an MCP server
-server = FastMCP("mcp_project", dependencies=["wget", "requests", "feedparser",
+server = FastMCP("MyArxivDB_MCP", dependencies=["wget", "requests", "feedparser",
                                               "pinecone"
                                               ])
 
