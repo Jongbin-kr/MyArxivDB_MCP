@@ -1,0 +1,24 @@
+[project]
+name = "myarxivdb-mcp"
+version = "0.1.0"
+description = "A MCP server project"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+ "dotenv>=0.9.9",
+ "feedparser>=6.0.11",
+ "mcp[cli]>=1.9.1",
+ "pinecone>=7.0.1",
+ "requests>=2.32.3",
+ "wget>=3.2",
+]
+[[project.authors]]
+name = "JONGBIN-MACBOOK"
+email = "wonjb001@naver.com"
+
+[build-system]
+requires = [ "hatchling",]
+build-backend = "hatchling.build"
+
+[project.scripts]
+myarxivdb-mcp = "myarxivdb_mcp:main"
