@@ -2,6 +2,17 @@
 
 A MCP server project
 
+
+```
+        "--directory",
+        "/Users/jongbin/MyArxivDB_MCP/data/pdfs",
+```
+
+
+
+
+----
+
 ## Components
 
 ### Resources

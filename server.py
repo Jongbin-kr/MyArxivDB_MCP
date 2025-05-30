@@ -6,19 +6,29 @@ import pathlib
 from dotenv import load_dotenv  # for loading environment variables from .env file
 import wget, requests, feedparser         # for crawling arxiv papers
 
-
 from mcp.server.fastmcp import FastMCP
 
-## import pinecone libraries for ermbedding passage and queries w/o resources
-from pinecone import Pinecone
+from pinecone import Pinecone  ## import pinecone libraries for ermbedding passage and queries w/o resources
 
-## load environment variables from .env file
+import psycopg2
+
+
+
+##########################
+## config for local env ##
+##########################
+PDF_DIRECTORY = "/Users/jongbin/MyArxivDB_MCP/data/pdfs"
+
+
+
+## load env keys
 load_dotenv()
-PINECONCE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONCE_API_KEY = os.getenv("PINECONE_API_KEY") ## load environment variables from .env file
 
 # Create an MCP server
 server = FastMCP("MyArxivDB_MCP", dependencies=["wget", "requests", "feedparser",
-                                              "pinecone"
+                                              "pinecone",
+                                              "psycopg2", 
                                               ])
 
 
@@ -28,8 +38,6 @@ server = FastMCP("MyArxivDB_MCP", dependencies=["wget", "requests", "feedparser"
 
 ## embed document and embed query functions using Pinecone's embedding service
 pc = Pinecone(api_key=PINECONCE_API_KEY)
-
-    
 
 @server.tool()
 def embed_document(document: str)->List[float]:
@@ -68,7 +76,7 @@ def embed_query(query: str) -> List[float]:
     """
     
     embedding = pc.inference.embed(
-        model="llama-text-embed-v2",
+        model="llama-text-embed-v2",   # embedding dimension: 1024
         inputs=[query],
         parameters={"input_type": "query", "truncate": "END"}
     )
@@ -92,7 +100,6 @@ async def crawl_arxiv_paper(arxiv_id_or_url: str) -> dict:
         return raw.replace("pdf", "").strip("/")
     
     arxiv_id = _clean_id(arxiv_id_or_url)
-    # print(f"\n=== {arxiv_id} ===")
     
     
     ## Fetch metadata from arXiv Atom API using arxiv ID
@@ -105,37 +112,45 @@ async def crawl_arxiv_paper(arxiv_id_or_url: str) -> dict:
 
         e = feed.entries[0]
         return {
-            "id":              arxiv_id,
-            "title":           " ".join(e.title.split()),
-            "abstract":        " ".join(e.summary.split()),
-            "authors":         [a.name for a in e.authors],
-            "published":       e.published[:10],
-            "year":            e.published[:4],
-            "primary_category":e.arxiv_primary_category["term"],
-            "categories":      [t["term"] for t in e.tags],
-            "pdf_url":         next(l.href for l in e.links if l.type == "application/pdf"),
-            "path_to_pdf": """Blah Blah """
+            "id":                arxiv_id,
+            "title":             " ".join(e.title.split()),
+            "abstract":          " ".join(e.summary.split()),
+            "authors":          [a.name for a in e.authors],
+            "published_date":     e.published[:10],
+            "primary_category": e.arxiv_primary_category["term"],
+            "categories":       [t["term"] for t in e.tags],
+            "arxiv_url":        next(l.href for l in e.links if l.type == "application/pdf"),
+            # "pdf_file_path":    None,    # it will be updated later
+            # "embedding":        None
         }
     
     metadata = _fetch_meta(arxiv_id)
-    # print(f"{metadata['title']} ({metadata['year']})")
-    # print(f"Authors : {', '.join(metadata['authors'])}")
-    # print(f"Category: {metadata['primary_category']}")
-    # print(f"Abstract: {textwrap.shorten(metadata['abstract'], width=120)}")
     
     
-    ## Download the PDF file of the arxiv paper
-    ## ERROR: [Errno 2] No such file or directory: '/data/arxiv_papers/2208_01618.pdfydcct1im.tmp'
-    # output_dir = pathlib.Path("./data/arxiv_papers")
-    # filename = output_dir / f"{arxiv_id.replace('.', '_')}.pdf"
-    # if not filename.exists():
-    #     wget.download(metadata["pdf_url"], out=str(filename))
-    #     print(f"\nSaved to {filename}")
+    ## Download the PDF file of the arxiv paper & add pdf filepath to metadata dict
+    pdf_dir = pathlib.Path(PDF_DIRECTORY)
+    pdf_dir.mkdir(parents=True, exist_ok=True)  # <-- 이 줄 추가
+
+    pdf_file_path = pdf_dir / f"{arxiv_id.replace('.', '_')}.pdf"
+    if not pdf_file_path.exists():
+        wget.download(metadata["arxiv_url"], out=str(pdf_file_path))
+    #     print(f"\nSaved to {pdf_file_path}")
     # else:
-    #     print(f"PDF already exists: {filename}")
+    #     print(f"PDF already exists: {pdf_file_path}")
     
+    metadata["pdf_file_path"] = pdf_file_path
+    
+    
+    
+    ## get embedding & update metadata
+    embedding = embed_document(metadata["abstract"])
+    metadata["embedding"] = embedding
 
     return metadata
+
+
+
+
 
 if __name__ == "__main__":
     server.run()
