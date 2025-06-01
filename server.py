@@ -146,6 +146,9 @@ async def crawl_arxiv_paper(arxiv_id_or_url: str) -> dict:
     embedding = embed_document(metadata["abstract"])
     metadata["embedding"] = embedding
 
+    ## update user_added_date to metadata
+    metadata["user_added_date"] = date.today().isoformat()
+
     return metadata
 
 
@@ -200,7 +203,8 @@ class MyArxivDBServer(FastMCP):
                 categories TEXT[],
                 arxiv_url TEXT,
                 pdf_file_path TEXT,
-                embedding VECTOR(1024)
+                embedding VECTOR(1024),
+                user_added_date DATE
             );
             """
         )
@@ -230,6 +234,7 @@ class MyArxivDBServer(FastMCP):
         )
         
         self.db_conn.commit()
+        cur.close()
 
     def show_table_schema(self):
         """Print the schema of the created tables."""
@@ -252,25 +257,28 @@ class MyArxivDBServer(FastMCP):
         print("\nProjectPapers Table Schema:")
         for row in cur.fetchall():
             print(f"{row[0]}: {row[1]}")
+
+        cur.close()
         
     def create_view(self):
         cur = self.db_conn.cursor()
         
         cur.execute(
             """
-            CREATE VIEW ProjectEmbeddingStats AS
+            CREATE OR REPLACE VIEW ProjectEmbeddingStats AS
             SELECT
                 pr.id AS project_id,
-                COUNT(p.id) FILTER (WHERE ppl.relation_type = 'hard') AS num_hard_papers,
-                AVG(p.embedding) FILTER (WHERE ppl.relation_type = 'hard') AS avg_embedding
+                COUNT(p.arxiv_id) FILTER (WHERE ppl.relation_type = 'assigned') AS num_assigned_papers,
+                AVG(p.embedding) FILTER (WHERE ppl.relation_type = 'assigned') AS avg_embedding
             FROM Projects pr
-            LEFT JOIN PaperProjectLinks ppl ON pr.id = ppl.project_id
-            LEFT JOIN Papers p ON ppl.paper_id = p.id
+            LEFT JOIN ProjectPapers ppl ON pr.id = ppl.project_id
+            LEFT JOIN Papers p ON ppl.paper_id = p.arxiv_id
             GROUP BY pr.id;
             """
         )
         
         self.db_conn.commit()
+        cur.close()
     
     def __init__(self, name: str, dependencies: List[str]):
         super().__init__(name, dependencies=dependencies)
@@ -279,6 +287,7 @@ class MyArxivDBServer(FastMCP):
         # create tables if not exist
         self.create_tables()
         self.show_table_schema()
+        self.create_view()
 
 # Replace the server initialization with the new class
 server = MyArxivDBServer("MyArxivDB_MCP", 
@@ -299,6 +308,8 @@ async def clear_database() -> str:
     
     # Clear Projects table
     cur.execute("DELETE FROM Projects;")
+
+    cur.close()
 
     server.db_conn.commit()
 
@@ -323,7 +334,8 @@ async def add_new_project(project_name: str,
         )
 
         project_id = cur.fetchone()[0]
-
+        cur.close()
+        server.db_conn.commit()
         return project_id
     except Exception as e:
         print(f"Error inserting tuple into Projects : {e}")
@@ -352,8 +364,8 @@ async def add_new_paper(arxiv_id: str) -> dict:
         # Insert the new paper into the Papers table
         cur.execute(
             """
-            INSERT INTO Papers (arxiv_id, title, abstract, authors, published_date, primary_category, categories, pdf_file_path, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO Papers (arxiv_id, title, abstract, authors, published_date, primary_category, categories, pdf_file_path, embedding, user_added_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING arxiv_id;
             """,
             (
@@ -365,15 +377,19 @@ async def add_new_paper(arxiv_id: str) -> dict:
                 metadata["primary_category"],
                 metadata["categories"],
                 str(metadata["pdf_file_path"]),
-                metadata["embedding"]
+                metadata["embedding"],
+                metadata["user_added_date"]
             )
         )
         
         arxiv_id = cur.fetchone()[0]
+        cur.close()
+        server.db_conn.commit()
         return {"message": "Paper added successfully", "arxiv_id": arxiv_id}
         
     else:
         arxiv_id = paper[0]
+        cur.close()
         return {"message": "Paper already exists", "arxiv_id": arxiv_id}
 
 # Get one project from the database
@@ -389,6 +405,7 @@ async def get_project_by_id(project_id: int) -> dict:
     )
 
     project = cur.fetchone()
+    cur.close()
     if project:
         return {
             "id": project[0],
@@ -412,6 +429,7 @@ async def get_all_projects() -> List[dict]:
     )
 
     projects = cur.fetchall()
+    cur.close()
     return [
         {
             "id": project[0],
@@ -446,7 +464,8 @@ async def get_all_papers() -> List[dict]:
                 "categories": paper[6],
                 "arxiv_url": paper[7],
                 "pdf_file_path": paper[8],
-                "embedding": paper[9]
+                "embedding": paper[9],
+                "user_added_date": paper[10]
             }
             for paper in papers
         ]
@@ -497,11 +516,33 @@ async def assign_paper_to_project(project_id: int, arxiv_id: str) -> dict:
         (project_id, paper_id)
     )
 
+    cur.close()
     server.db_conn.commit()
 
     return {"message": "Paper assigned to project successfully", "paper_id": paper_id}
 
-
+# Check ProjectEmbeddingStats ordered by project_id (default rows = 20)
+@server.tool()
+async def query_project_stats(limit: int = 20) -> List[dict]:
+    cur = server.db_conn.cursor()
+    cur.execute("""
+        SELECT project_id,
+               num_assigned_papers,
+               avg_embedding::text
+        FROM   ProjectEmbeddingStats
+        ORDER  BY project_id
+        LIMIT  %s;
+    """, (limit,))
+    rows = cur.fetchall()
+    cur.close()
+    return [
+        {
+            "project_id":            r[0],
+            "num_assigned_papers":   r[1],
+            "avg_embedding":         r[2]
+        }
+        for r in rows
+    ]
 
 
 if __name__ == "__main__":
