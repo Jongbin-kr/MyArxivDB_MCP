@@ -39,119 +39,6 @@ server = FastMCP("MyArxivDB_MCP", dependencies=["wget", "requests", "feedparser"
 ## embed document and embed query functions using Pinecone's embedding service
 pc = Pinecone(api_key=PINECONCE_API_KEY)
 
-@server.tool()
-def embed_document(document: str)->List[float]:
-    """
-    Embeds a document, NOT QUERY using Pinecone's embedding service. 
-    For query embedding, we need to use embed_query function instead.
-
-    
-    Args:
-        document (str): The text of the document to embed.
-        
-    Returns:
-        List[float]: A list of embeddings for the document.
-    """
-    
-    embedding = pc.inference.embed(
-        model="llama-text-embed-v2",
-        inputs=[document],
-        parameters={"input_type": "passage", "truncate": "END"}
-    )
-        
-    return embedding.data[0]['values']
-
-
-
-@server.tool()
-def embed_query(query: str) -> List[float]:
-    """
-    Embeds a query using Pinecone's embedding service.
-    
-    Args:
-        query (str): The text of the query to embed.
-        
-    Returns:
-        List[float]: A list of embeddings for the query.
-    """
-    
-    embedding = pc.inference.embed(
-        model="llama-text-embed-v2",   # embedding dimension: 1024
-        inputs=[query],
-        parameters={"input_type": "query", "truncate": "END"}
-    )
-    
-    return embedding.data[0]['values']
-
-
-
-
-## crawl arxiv papers from arxiv url using arxiv API
-@server.tool()
-async def crawl_arxiv_paper(arxiv_id_or_url: str) -> dict:
-    
-    ## clean arxiv URL into arxiv ID
-    def _clean_id(raw: str) -> str:
-        """If input was arxiv URL, not arxiv ID, pre-process the URL into arxiv ID."""
-        raw = raw.strip()
-        if raw.startswith("http"):
-            raw = raw.rsplit("/", 1)[-1]
-
-        return raw.replace("pdf", "").strip("/")
-    
-    arxiv_id = _clean_id(arxiv_id_or_url)
-    
-    
-    ## Fetch metadata from arXiv Atom API using arxiv ID
-    def _fetch_meta(arxiv_id: str) -> dict:
-        """Crawl metadata with arXiv Atom API"""
-        API = "http://export.arxiv.org/api/query?id_list={id}"
-        feed = feedparser.parse(requests.get(API.format(id=arxiv_id), timeout=10).text)
-        if not feed.entries:
-            raise ValueError(f"Invalid arXiv ID: {arxiv_id}")
-
-        e = feed.entries[0]
-        return {
-            "arxiv_id":          arxiv_id,
-            "title":             " ".join(e.title.split()),
-            "abstract":          " ".join(e.summary.split()),
-            "authors":          [a.name for a in e.authors],
-            "published_date":     e.published[:10],
-            "primary_category": e.arxiv_primary_category["term"],
-            "categories":       [t["term"] for t in e.tags],
-            "arxiv_url":        next(l.href for l in e.links if l.type == "application/pdf"),
-            # "pdf_file_path":    None,    # it will be updated later
-            # "embedding":        None
-        }
-    
-    metadata = _fetch_meta(arxiv_id)
-    
-    
-    ## Download the PDF file of the arxiv paper & add pdf filepath to metadata dict
-    pdf_dir = pathlib.Path(PDF_DIRECTORY)
-    pdf_dir.mkdir(parents=True, exist_ok=True)  # <-- 이 줄 추가
-
-    pdf_file_path = pdf_dir / f"{arxiv_id.replace('.', '_')}.pdf"
-    if not pdf_file_path.exists():
-        wget.download(metadata["arxiv_url"], out=str(pdf_file_path))
-    #     print(f"\nSaved to {pdf_file_path}")
-    # else:
-    #     print(f"PDF already exists: {pdf_file_path}")
-    
-    metadata["pdf_file_path"] = pdf_file_path
-    
-    
-    
-    ## get embedding & update metadata
-    embedding = embed_document(metadata["abstract"])
-    metadata["embedding"] = embedding
-
-    ## update user_added_date to metadata
-    metadata["user_added_date"] = date.today().isoformat()
-
-    return metadata
-
-
 class MyArxivDBServer(FastMCP):
     def connect_db(self):
         """Connect to the PostgreSQL database."""
@@ -311,6 +198,119 @@ class MyArxivDBServer(FastMCP):
 server = MyArxivDBServer("MyArxivDB_MCP", 
                          dependencies=["wget", "requests", "feedparser",
                                        "pinecone", "psycopg2"])
+
+
+@server.tool()
+def embed_document(document: str)->List[float]:
+    """
+    Embeds a document, NOT QUERY using Pinecone's embedding service. 
+    For query embedding, we need to use embed_query function instead.
+
+    
+    Args:
+        document (str): The text of the document to embed.
+        
+    Returns:
+        List[float]: A list of embeddings for the document.
+    """
+    
+    embedding = pc.inference.embed(
+        model="llama-text-embed-v2",
+        inputs=[document],
+        parameters={"input_type": "passage", "truncate": "END"}
+    )
+        
+    return embedding.data[0]['values']
+
+
+
+@server.tool()
+def embed_query(query: str) -> List[float]:
+    """
+    Embeds a query using Pinecone's embedding service.
+    
+    Args:
+        query (str): The text of the query to embed.
+        
+    Returns:
+        List[float]: A list of embeddings for the query.
+    """
+    
+    embedding = pc.inference.embed(
+        model="llama-text-embed-v2",   # embedding dimension: 1024
+        inputs=[query],
+        parameters={"input_type": "query", "truncate": "END"}
+    )
+    
+    return embedding.data[0]['values']
+
+
+
+
+## crawl arxiv papers from arxiv url using arxiv API
+@server.tool()
+async def crawl_arxiv_paper(arxiv_id_or_url: str) -> dict:
+    
+    ## clean arxiv URL into arxiv ID
+    def _clean_id(raw: str) -> str:
+        """If input was arxiv URL, not arxiv ID, pre-process the URL into arxiv ID."""
+        raw = raw.strip()
+        if raw.startswith("http"):
+            raw = raw.rsplit("/", 1)[-1]
+
+        return raw.replace("pdf", "").strip("/")
+    
+    arxiv_id = _clean_id(arxiv_id_or_url)
+    
+    
+    ## Fetch metadata from arXiv Atom API using arxiv ID
+    def _fetch_meta(arxiv_id: str) -> dict:
+        """Crawl metadata with arXiv Atom API"""
+        API = "http://export.arxiv.org/api/query?id_list={id}"
+        feed = feedparser.parse(requests.get(API.format(id=arxiv_id), timeout=10).text)
+        if not feed.entries:
+            raise ValueError(f"Invalid arXiv ID: {arxiv_id}")
+
+        e = feed.entries[0]
+        return {
+            "arxiv_id":          arxiv_id,
+            "title":             " ".join(e.title.split()),
+            "abstract":          " ".join(e.summary.split()),
+            "authors":          [a.name for a in e.authors],
+            "published_date":     e.published[:10],
+            "primary_category": e.arxiv_primary_category["term"],
+            "categories":       [t["term"] for t in e.tags],
+            "arxiv_url":        next(l.href for l in e.links if l.type == "application/pdf"),
+            # "pdf_file_path":    None,    # it will be updated later
+            # "embedding":        None
+        }
+    
+    metadata = _fetch_meta(arxiv_id)
+    
+    
+    ## Download the PDF file of the arxiv paper & add pdf filepath to metadata dict
+    pdf_dir = pathlib.Path(PDF_DIRECTORY)
+    pdf_dir.mkdir(parents=True, exist_ok=True)  # <-- 이 줄 추가
+
+    pdf_file_path = pdf_dir / f"{arxiv_id.replace('.', '_')}.pdf"
+    if not pdf_file_path.exists():
+        wget.download(metadata["arxiv_url"], out=str(pdf_file_path))
+    #     print(f"\nSaved to {pdf_file_path}")
+    # else:
+    #     print(f"PDF already exists: {pdf_file_path}")
+    
+    metadata["pdf_file_path"] = pdf_file_path
+    
+    
+    
+    ## get embedding & update metadata
+    embedding = embed_document(metadata["abstract"])
+    metadata["embedding"] = embedding
+
+    ## update user_added_date to metadata
+    metadata["user_added_date"] = date.today().isoformat()
+
+    return metadata
 
 
 # Clear database tables
@@ -544,9 +544,84 @@ async def assign_paper_to_project(project_id: int, arxiv_id: str) -> dict:
     return {"message": "Paper assigned to project successfully", "paper_id": paper_id}
 
 
+# Get papers by date
+@server.tool()
+async def get_papers_by_date(added_date: str) -> List[dict]:
+    cur = server.db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT arxiv_id, title, abstract, authors, published_date,
+                   primary_category, categories, arxiv_url, pdf_file_path,
+                   user_added_date
+            FROM Papers
+            WHERE user_added_date = %s;
+            """,
+            (added_date,)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "arxiv_id":       r[0],
+                "title":          r[1],
+                "abstract":       r[2],
+                "authors":        r[3],
+                "published_date": r[4],
+                "primary_category": r[5],
+                "categories":     r[6],
+                "arxiv_url":      r[7],
+                "pdf_file_path":  r[8],
+                "user_added_date": r[9]
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        server.db_conn.rollback()
+        return {"error": str(e)}
+    finally:
+        cur.close()
+
+
+# Get papers by category
+@server.tool()
+async def get_papers_by_category(category: str) -> List[dict]:
+    cur = server.db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT arxiv_id, title, abstract, authors, published_date,
+                   primary_category, categories, arxiv_url, pdf_file_path,
+                   user_added_date
+            FROM Papers
+            WHERE %s = ANY(categories);
+            """,
+            (category,)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "arxiv_id":       r[0],
+                "title":          r[1],
+                "abstract":       r[2],
+                "authors":        r[3],
+                "published_date": r[4],
+                "primary_category": r[5],
+                "categories":     r[6],
+                "arxiv_url":      r[7],
+                "pdf_file_path":  r[8],
+                "user_added_date": r[9]
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        server.db_conn.rollback()
+        return {"error": str(e)}
+    finally:
+        cur.close()
+
+
 # Find the closest project of a given paper
 @server.tool()
-
 async def assign_paper_to_closest_project(arxiv_id: str) -> dict:
     cur = server.db_conn.cursor()
 
@@ -599,7 +674,7 @@ async def assign_paper_to_closest_project(arxiv_id: str) -> dict:
     return {"message": "Paper assigned to project successfully", "project_id": project[0], "project_name": project[1], "paper_id": paper_id}
 
 
-# Check ProjectEmbeddingStats ordered by project_id (default rows = 20)
+# Check ProjectEmbeddings ordered by project_id (default rows = 20)
 @server.tool()
 async def query_project_stats(limit: int = 20) -> List[dict]:
     cur = server.db_conn.cursor()
@@ -607,7 +682,7 @@ async def query_project_stats(limit: int = 20) -> List[dict]:
         SELECT project_id,
                num_assigned_papers,
                avg_embedding::text
-        FROM   ProjectEmbeddingStats
+        FROM   ProjectEmbeddings
         ORDER  BY project_id
         LIMIT  %s;
     """, (limit,))
@@ -622,6 +697,49 @@ async def query_project_stats(limit: int = 20) -> List[dict]:
         for r in rows
     ]
 
+# Search related papers based on query in a specific project
+@server.tool()
+async def search_related_papers(project_id: int, query: str, top_k: int = 5) -> List[dict]:
+    query_vec = embed_query(query)
+
+    cur = server.db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT p.arxiv_id, p.title, p.abstract, p.authors, p.published_date,
+                   p.primary_category, p.categories, p.arxiv_url, p.pdf_file_path,
+                   p.user_added_date,
+                   (p.embedding <-> %s::vector) AS distance
+            FROM Papers p
+            JOIN ProjectPapers pp ON p.arxiv_id = pp.paper_id
+            WHERE pp.project_id = %s
+            ORDER BY p.embedding <-> %s::vector
+            LIMIT %s;
+            """,
+            (query_vec, project_id, query_vec, top_k)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "arxiv_id":       r[0],
+                "title":          r[1],
+                "abstract":       r[2],
+                "authors":        r[3],
+                "published_date": r[4],
+                "primary_category": r[5],
+                "categories":     r[6],
+                "arxiv_url":      r[7],
+                "pdf_file_path":  r[8],
+                "user_added_date": r[9],
+                "distance":       r[10]
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        server.db_conn.rollback()
+        return {"error": str(e)}
+    finally:
+        cur.close()
 
 if __name__ == "__main__":
     server.run()
