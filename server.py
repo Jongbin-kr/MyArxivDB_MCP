@@ -228,6 +228,24 @@ class MyArxivDBServer(FastMCP):
             );
             """
         )
+
+
+
+        # Create ProjectEmbeddings view
+        cur.execute(
+            """
+            DROP VIEW IF EXISTS ProjectEmbeddings;
+            CREATE VIEW ProjectEmbeddings AS
+            SELECT
+                pr.id AS project_id,
+                AVG(p.embedding) FILTER (WHERE pp.relation_type = 'assigned') AS embedding, 
+                COUNT(p.arxiv_id) FILTER (WHERE pp.relation_type = 'assigned') AS n_assigned_papers
+            FROM Projects pr
+            LEFT JOIN ProjectPapers pp ON pr.id = pp.project_id
+            LEFT JOIN Papers p ON pp.paper_id = p.arxiv_id
+            GROUP BY pr.id;
+            """
+        )
         
         self.db_conn.commit()
 
@@ -483,7 +501,11 @@ async def assign_paper_to_project(project_id: int, arxiv_id: str) -> dict:
     paper = cur.fetchone()
 
     if not paper:
-        return {"error": "Paper not found, must add the paper first"}
+        # If the paper does not exist, add it
+        metadata = await add_new_paper(arxiv_id)
+        if "error" in metadata:
+            return metadata
+        paper_id = metadata["arxiv_id"]
         
     else:
         paper_id = paper[0]
@@ -500,6 +522,61 @@ async def assign_paper_to_project(project_id: int, arxiv_id: str) -> dict:
     server.db_conn.commit()
 
     return {"message": "Paper assigned to project successfully", "paper_id": paper_id}
+
+
+# Find the closest project of a given paper
+@server.tool()
+
+async def assign_paper_to_closest_project(arxiv_id: str) -> dict:
+    cur = server.db_conn.cursor()
+
+    # Check if the paper already exists
+    cur.execute(
+        """
+        SELECT arxiv_id FROM Papers WHERE arxiv_id = %s;
+        """,
+        (arxiv_id,)
+    )
+    paper = cur.fetchone()
+
+    if not paper:
+        # If the paper does not exist, add it
+        metadata = await add_new_paper(arxiv_id)
+        if "error" in metadata:
+            return metadata
+        paper_id = metadata["arxiv_id"]
+        
+    else:
+        paper_id = paper[0]
+
+    # Find the project with the closest embedding
+    cur.execute(
+        """
+        SELECT pr.id, pr.name, pr.description, pr.start_date, pr.end_date,
+               pe.embedding, pe.n_assigned_papers
+        FROM Projects pr
+        JOIN ProjectEmbeddings pe ON pr.id = pe.project_id
+        ORDER BY pe.embedding <-> (SELECT embedding FROM Papers WHERE arxiv_id = %s)
+        LIMIT 1;
+        """,
+        (arxiv_id,)
+    )
+    project = cur.fetchone()
+    if not project:
+        return {"error": "No projects found"}
+
+    # Assign the paper to the project
+    cur.execute(
+        """
+        INSERT INTO ProjectPapers (project_id, paper_id, relation_type)
+        VALUES (%s, %s, 'related');
+        """,
+        (project[0], paper_id)
+    )
+
+    server.db_conn.commit()
+
+    return {"message": "Paper assigned to project successfully", "project_id": project[0], "project_name": project[1], "paper_id": paper_id}
 
 
 
