@@ -483,7 +483,7 @@ async def assign_paper_to_closest_project(arxiv_url_or_id: str=Field(description
                pe.embedding, pe.n_assigned_papers
         FROM Projects pr
         JOIN ProjectEmbeddings pe ON pr.id = pe.project_id
-        ORDER BY pe.embedding <-> (SELECT embedding FROM Papers WHERE arxiv_id = %s)
+        ORDER BY pe.embedding <=> (SELECT embedding FROM Papers WHERE arxiv_id = %s)
         LIMIT 1;
         """,
         (arxiv_id,)
@@ -735,11 +735,11 @@ async def search_related_papers(
             SELECT p.arxiv_id, p.title, p.abstract, p.authors, p.published_date,
                    p.primary_category, p.categories, p.arxiv_url, p.pdf_file_path,
                    p.user_added_date,
-                   (p.embedding <-> %s::vector) AS distance
+                   (p.embedding <=> %s::vector) AS distance
             FROM Papers p
             JOIN ProjectPapers pp ON p.arxiv_id = pp.paper_id
             WHERE pp.project_id = %s
-            ORDER BY p.embedding <-> %s::vector
+            ORDER BY p.embedding <=> %s::vector
             LIMIT %s;
             """,
             (query_vec, project_id, query_vec, top_k)
