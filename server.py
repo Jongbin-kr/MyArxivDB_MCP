@@ -655,6 +655,46 @@ async def get_papers_by_date(added_date: str=Field(description="the data when th
         cur.close()
 
 
+@server.tool(description="Get N numbers of papers in a specific project ID")
+def get_papers_by_project_id(project_id: int=Field(description="ID of the project to get papers from"),
+                             limit: int=Field(description="Specify how many paper to be shown")) -> List[dict]:
+    cur = server.db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT p.arxiv_id, p.title, p.abstract, p.authors, p.published_date,
+                   p.primary_category, p.categories, p.arxiv_url, p.pdf_file_path,
+                   p.user_added_date
+            FROM Papers p
+            JOIN ProjectPapers pp ON p.arxiv_id = pp.paper_id
+            WHERE pp.project_id = %s;
+            LIMIT %s;
+            """,
+            (project_id, limit)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "arxiv_id":       r[0],
+                "title":          r[1],
+                "abstract":       r[2],
+                "authors":        r[3],
+                "published_date": r[4],
+                "primary_category": r[5],
+                "categories":     r[6],
+                "arxiv_url":      r[7],
+                "pdf_file_path":  r[8],
+                "user_added_date": r[9]
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        server.db_conn.rollback()
+        return {"error": str(e)}
+    finally:
+        cur.close()
+
+
 # Get papers by category
 @server.tool(description="Get papers by a specific category")
 async def get_papers_by_category(category: str) -> List[dict]:
