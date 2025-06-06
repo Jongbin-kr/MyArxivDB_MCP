@@ -395,7 +395,7 @@ async def add_paper_without_assigning_project(arxiv_url_or_id: str=Field(descrip
 
 # Assign a paper to a project
 @server.tool(description="Given arxiv URL or ID, assign the paper to a user-defined specific project by project ID")
-async def assign_paper_to_speicific_project(
+async def assign_paper_to_specific_project(
     project_id: int=Field(description="ID of the specific project to assign the paper to"), 
     arxiv_url_or_id: str=Field(description="arxiv URL or ID of the paper that will be crawled and assigned to the specific project")) -> dict:
     
