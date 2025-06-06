@@ -6,6 +6,7 @@ from datetime import date
 
 from dotenv import load_dotenv  # for loading environment variables from .env file
 import wget, requests, feedparser         # for crawling arxiv papers
+from pydantic import Field  # to describe the input parameters of the tool functions
 
 from mcp.server.fastmcp import FastMCP
 
@@ -18,27 +19,21 @@ import psycopg2
 ## config for local env ##
 ##########################
 PDF_DIRECTORY = "/tmp/bkms1/pdfs"
-
-
-
-## load env keys
 load_dotenv()
 PINECONCE_API_KEY = os.getenv("PINECONE_API_KEY") ## load environment variables from .env file
 
-# Create an MCP server
+
+
+
+## Create an MCP server
 server = FastMCP("MyArxivDB_MCP", dependencies=["wget", "requests", "feedparser",
                                               "pinecone",
                                               "psycopg2", 
                                               ])
 
-
-
-
-
-
-## embed document and embed query functions using Pinecone's embedding service
-pc = Pinecone(api_key=PINECONCE_API_KEY)
-
+######################################
+## Initialize PostgreSQL connection ##
+######################################
 class MyArxivDBServer(FastMCP):
     def connect_db(self):
         """Connect to the PostgreSQL database."""
@@ -184,6 +179,8 @@ class MyArxivDBServer(FastMCP):
         
         self.db_conn.commit()
         cur.close()
+        
+        
     
     def __init__(self, name: str, dependencies: List[str]):
         super().__init__(name, dependencies=dependencies)
@@ -194,13 +191,17 @@ class MyArxivDBServer(FastMCP):
         self.show_table_schema()
         # self.create_view()
 
-# Replace the server initialization with the new class
+## Replace the server initialization with the new class
 server = MyArxivDBServer("MyArxivDB_MCP", 
                          dependencies=["wget", "requests", "feedparser",
                                        "pinecone", "psycopg2"])
 
 
-@server.tool()
+
+#####################################################
+## crawl arxiv metadata and embed document & query ##
+#####################################################
+pc = Pinecone(api_key=PINECONCE_API_KEY)
 def embed_document(document: str)->List[float]:
     """
     Embeds a document, NOT QUERY using Pinecone's embedding service. 
@@ -223,8 +224,6 @@ def embed_document(document: str)->List[float]:
     return embedding.data[0]['values']
 
 
-
-@server.tool()
 def embed_query(query: str) -> List[float]:
     """
     Embeds a query using Pinecone's embedding service.
@@ -246,26 +245,26 @@ def embed_query(query: str) -> List[float]:
 
 
 
+# clean arxiv URL into arxiv ID
+def clean_arxiv_id(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("http"):
+        raw = raw.rsplit("/", 1)[-1]
 
-## crawl arxiv papers from arxiv url using arxiv API
-@server.tool()
-async def crawl_arxiv_paper(arxiv_id_or_url: str) -> dict:
-    
-    ## clean arxiv URL into arxiv ID
-    def _clean_id(raw: str) -> str:
-        """If input was arxiv URL, not arxiv ID, pre-process the URL into arxiv ID."""
-        raw = raw.strip()
-        if raw.startswith("http"):
-            raw = raw.rsplit("/", 1)[-1]
+    return raw.replace("pdf", "").strip("/")
 
-        return raw.replace("pdf", "").strip("/")
-    
-    arxiv_id = _clean_id(arxiv_id_or_url)
-    
-    
-    ## Fetch metadata from arXiv Atom API using arxiv ID
+
+@server.tool(description="Given arxiv URL or ID, crawl arXiv paper metadata, embed the crawled abstract and download PDF file")
+async def crawl_arxiv_paper(arxiv_id_or_url: str=Field(description="arxiv ID or URL")) -> dict:
+    """
+    Crawl arXiv paper metadata, embed the crawled abstract and download PDF file.
+    It internally calls embedding document functions.
+    """
+    # pre-process the arxiv ID/URL to formatted arxiv ID
+    arxiv_id = clean_arxiv_id(arxiv_id_or_url)
+
+    # Fetch metadata from arXiv Atom API using arxiv ID
     def _fetch_meta(arxiv_id: str) -> dict:
-        """Crawl metadata with arXiv Atom API"""
         API = "http://export.arxiv.org/api/query?id_list={id}"
         feed = feedparser.parse(requests.get(API.format(id=arxiv_id), timeout=10).text)
         if not feed.entries:
@@ -288,58 +287,39 @@ async def crawl_arxiv_paper(arxiv_id_or_url: str) -> dict:
     metadata = _fetch_meta(arxiv_id)
     
     
-    ## Download the PDF file of the arxiv paper & add pdf filepath to metadata dict
+    # Download the PDF file of the arxiv paper & add pdf filepath to metadata dict
     pdf_dir = pathlib.Path(PDF_DIRECTORY)
     pdf_dir.mkdir(parents=True, exist_ok=True)  # <-- 이 줄 추가
 
     pdf_file_path = pdf_dir / f"{arxiv_id.replace('.', '_')}.pdf"
     if not pdf_file_path.exists():
         wget.download(metadata["arxiv_url"], out=str(pdf_file_path))
-    #     print(f"\nSaved to {pdf_file_path}")
-    # else:
-    #     print(f"PDF already exists: {pdf_file_path}")
     
     metadata["pdf_file_path"] = pdf_file_path
     
     
     
-    ## get embedding & update metadata
+    # get embedding & update metadata
     embedding = embed_document(metadata["abstract"])
     metadata["embedding"] = embedding
 
-    ## update user_added_date to metadata
+    # update user_added_date to metadata
     metadata["user_added_date"] = date.today().isoformat()
 
     return metadata
 
 
-# Clear database tables
-@server.tool() 
-async def clear_database() -> str:
-    cur = server.db_conn.cursor()
 
-    # Clear ProjectPapers table
-    cur.execute("DELETE FROM ProjectPapers;")
-    
-    # Clear Papers table
-    cur.execute("DELETE FROM Papers;")
-    
-    # Clear Projects table
-    cur.execute("DELETE FROM Projects;")
-
-    cur.close()
-
-    server.db_conn.commit()
-
-    return "Database cleared successfully"
-
+########################################
+## Add project and papers to database ##
+########################################
 
 # Add new project to the database, get project ID
-@server.tool()
-async def add_new_project(project_name: str,
-                          project_description: str,
-                          project_start: date,
-                          project_end: date) -> int:
+@server.tool(description="Add a new project to the database")
+async def add_new_project(project_name: str=Field(description="Name of the project"),
+                          project_description: str=Field(description="User description of the project"),
+                          project_start: date=Field(description="Project start date"),
+                          project_end: date=Field(description="Expected project end date"))-> int:
     cur = server.db_conn.cursor()
     try:
         cur.execute(
@@ -359,14 +339,16 @@ async def add_new_project(project_name: str,
         print(f"Error inserting tuple into Projects : {e}")
         raise
         
-    
 
 # Add a new paper to the database
-@server.tool()
-async def add_new_paper(arxiv_id: str) -> dict:
-    cur = server.db_conn.cursor()
-
+@server.tool(description="Given arxiv URL or ID, crawl the metadata of the paper and add them to the papers table WITHOUT assigning it to a project.")
+async def add_paper_without_assigning_project(arxiv_url_or_id: str=Field(description="arxiv URL or ID")) -> dict:
+    
+    # pre-process the arxiv ID/URL to formatted arxiv ID
+    arxiv_id = clean_arxiv_id(arxiv_url_or_id)
+    
     # Check if the paper already exists
+    cur = server.db_conn.cursor()
     cur.execute(
         """
         SELECT arxiv_id FROM Papers WHERE arxiv_id = %s;
@@ -410,95 +392,18 @@ async def add_new_paper(arxiv_id: str) -> dict:
         cur.close()
         return {"message": "Paper already exists", "arxiv_id": arxiv_id}
 
-# Get one project from the database
-@server.tool()
-async def get_project_by_id(project_id: int) -> dict:
-    cur = server.db_conn.cursor()
-
-    cur.execute(
-        """
-        SELECT * FROM Projects WHERE id = %s;
-        """,
-        (project_id,)
-    )
-
-    project = cur.fetchone()
-    cur.close()
-    if project:
-        return {
-            "id": project[0],
-            "name": project[1],
-            "description": project[2],
-            "start_date": project[3],
-            "end_date": project[4]
-        }
-    else:
-        return {"error": "Project not found"}
-
-# Get all projects from the database
-@server.tool()
-async def get_all_projects() -> List[dict]:
-    cur = server.db_conn.cursor()
-
-    cur.execute(
-        """
-        SELECT * FROM Projects;
-        """
-    )
-
-    projects = cur.fetchall()
-    cur.close()
-    return [
-        {
-            "id": project[0],
-            "name": project[1],
-            "description": project[2],
-            "start_date": project[3],
-            "end_date": project[4]
-        }
-        for project in projects
-    ]
-
-# Get all papers from the database
-@server.tool()
-async def get_all_papers() -> List[dict]:
-    cur = server.db_conn.cursor()
-    try: 
-        cur.execute(
-            """
-            SELECT * FROM Papers;
-            """
-        )
-
-        papers = cur.fetchall()
-        return [
-            {
-                "arxiv_id": paper[0],
-                "title": paper[1],
-                "abstract": paper[2],
-                "authors": paper[3],
-                "published_date": paper[4],
-                "primary_category": paper[5],
-                "categories": paper[6],
-                "arxiv_url": paper[7],
-                "pdf_file_path": paper[8],
-                "embedding": paper[9],
-                "user_added_date": paper[10]
-            }
-            for paper in papers
-        ]
-    except Exception as e:
-        server.db_conn.rollback()
-        return {"error": str(e)}
-    finally:
-        cur.close()
 
 # Assign a paper to a project
-@server.tool()
-async def assign_paper_to_project(project_id: int, arxiv_id: str) -> dict:
-    cur = server.db_conn.cursor()
-
+@server.tool(description="Given arxiv URL or ID, assign the paper to a user-defined specific project by project ID")
+async def assign_paper_to_speicific_project(
+    project_id: int=Field(description="ID of the specific project to assign the paper to"), 
+    arxiv_url_or_id: str=Field(description="arxiv URL or ID of the paper that will be crawled and assigned to the specific project")) -> dict:
+    
+    # pre-process the arxiv ID/URL to formatted arxiv ID
+    arxiv_id = clean_arxiv_id(arxiv_url_or_id)
+    
     # Check if the project exists
+    cur = server.db_conn.cursor()
     cur.execute(
         """
         SELECT id FROM Projects WHERE id = %s;
@@ -521,7 +426,7 @@ async def assign_paper_to_project(project_id: int, arxiv_id: str) -> dict:
 
     if not paper:
         # If the paper does not exist, add it
-        metadata = await add_new_paper(arxiv_id)
+        metadata = await add_paper_without_assigning_project(arxiv_id)
         if "error" in metadata:
             return metadata
         paper_id = metadata["arxiv_id"]
@@ -544,88 +449,15 @@ async def assign_paper_to_project(project_id: int, arxiv_id: str) -> dict:
     return {"message": "Paper assigned to project successfully", "paper_id": paper_id}
 
 
-# Get papers by date
-@server.tool()
-async def get_papers_by_date(added_date: str) -> List[dict]:
-    cur = server.db_conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT arxiv_id, title, abstract, authors, published_date,
-                   primary_category, categories, arxiv_url, pdf_file_path,
-                   user_added_date
-            FROM Papers
-            WHERE user_added_date = %s;
-            """,
-            (added_date,)
-        )
-        rows = cur.fetchall()
-        return [
-            {
-                "arxiv_id":       r[0],
-                "title":          r[1],
-                "abstract":       r[2],
-                "authors":        r[3],
-                "published_date": r[4],
-                "primary_category": r[5],
-                "categories":     r[6],
-                "arxiv_url":      r[7],
-                "pdf_file_path":  r[8],
-                "user_added_date": r[9]
-            }
-            for r in rows
-        ]
-    except Exception as e:
-        server.db_conn.rollback()
-        return {"error": str(e)}
-    finally:
-        cur.close()
-
-
-# Get papers by category
-@server.tool()
-async def get_papers_by_category(category: str) -> List[dict]:
-    cur = server.db_conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT arxiv_id, title, abstract, authors, published_date,
-                   primary_category, categories, arxiv_url, pdf_file_path,
-                   user_added_date
-            FROM Papers
-            WHERE %s = ANY(categories);
-            """,
-            (category,)
-        )
-        rows = cur.fetchall()
-        return [
-            {
-                "arxiv_id":       r[0],
-                "title":          r[1],
-                "abstract":       r[2],
-                "authors":        r[3],
-                "published_date": r[4],
-                "primary_category": r[5],
-                "categories":     r[6],
-                "arxiv_url":      r[7],
-                "pdf_file_path":  r[8],
-                "user_added_date": r[9]
-            }
-            for r in rows
-        ]
-    except Exception as e:
-        server.db_conn.rollback()
-        return {"error": str(e)}
-    finally:
-        cur.close()
-
-
 # Find the closest project of a given paper
-@server.tool()
-async def assign_paper_to_closest_project(arxiv_id: str) -> dict:
-    cur = server.db_conn.cursor()
+@server.tool(description="Given arxiv URL or ID, crawl the paper metadata, automatically find the closest project to the paper based on its embedding, and assign it to that project")
+async def assign_paper_to_closest_project(arxiv_url_or_id: str=Field(description="arxiv URL or ID")) -> dict:
+    
+    # pre-process the arxiv ID/URL to formatted arxiv ID
+    arxiv_id = clean_arxiv_id(arxiv_url_or_id)
 
     # Check if the paper already exists
+    cur = server.db_conn.cursor()
     cur.execute(
         """
         SELECT arxiv_id FROM Papers WHERE arxiv_id = %s;
@@ -636,7 +468,7 @@ async def assign_paper_to_closest_project(arxiv_id: str) -> dict:
 
     if not paper:
         # If the paper does not exist, add it
-        metadata = await add_new_paper(arxiv_id)
+        metadata = await add_paper_without_assigning_project(arxiv_id)
         if "error" in metadata:
             return metadata
         paper_id = metadata["arxiv_id"]
@@ -674,9 +506,197 @@ async def assign_paper_to_closest_project(arxiv_id: str) -> dict:
     return {"message": "Paper assigned to project successfully", "project_id": project[0], "project_name": project[1], "paper_id": paper_id}
 
 
+# Clear database tables
+@server.tool(description="Clear all data from the database tables") 
+async def clear_database() -> str:
+    cur = server.db_conn.cursor()
+
+    # Clear ProjectPapers table
+    cur.execute("DELETE FROM ProjectPapers;")
+    
+    # Clear Papers table
+    cur.execute("DELETE FROM Papers;")
+    
+    # Clear Projects table
+    cur.execute("DELETE FROM Projects;")
+
+    cur.close()
+
+    server.db_conn.commit()
+
+    return "Database cleared successfully"
+
+
+################################
+## Get data from the database ##
+#################################
+
+# Get one project from the database
+@server.tool(description="Get a specific project by its ID")
+async def get_project_by_id(project_id: int=Field(description="ID of the specific project to assign the paper to")) -> dict:
+    cur = server.db_conn.cursor()
+
+    cur.execute(
+        """
+        SELECT * FROM Projects WHERE id = %s;
+        """,
+        (project_id,)
+    )
+
+    project = cur.fetchone()
+    cur.close()
+    if project:
+        return {
+            "id": project[0],
+            "name": project[1],
+            "description": project[2],
+            "start_date": project[3],
+            "end_date": project[4]
+        }
+    else:
+        return {"error": "Project not found"}
+
+
+# Get all projects from the database
+@server.tool(description="Get all projects from the database")
+async def get_all_projects() -> List[dict]:
+    cur = server.db_conn.cursor()
+
+    cur.execute(
+        """
+        SELECT * FROM Projects;
+        """
+    )
+
+    projects = cur.fetchall()
+    cur.close()
+    return [
+        {
+            "id": project[0],
+            "name": project[1],
+            "description": project[2],
+            "start_date": project[3],
+            "end_date": project[4]
+        }
+        for project in projects
+    ]
+
+
+# Get all papers from the database
+@server.tool(description="Get all papers from the database")
+async def get_all_papers() -> List[dict]:
+    cur = server.db_conn.cursor()
+    try: 
+        cur.execute(
+            """
+            SELECT * FROM Papers;
+            """
+        )
+
+        papers = cur.fetchall()
+        return [
+            {
+                "arxiv_id": paper[0],
+                "title": paper[1],
+                "abstract": paper[2],
+                "authors": paper[3],
+                "published_date": paper[4],
+                "primary_category": paper[5],
+                "categories": paper[6],
+                "arxiv_url": paper[7],
+                "pdf_file_path": paper[8],
+                "embedding": paper[9],
+                "user_added_date": paper[10]
+            }
+            for paper in papers
+        ]
+    except Exception as e:
+        server.db_conn.rollback()
+        return {"error": str(e)}
+    finally:
+        cur.close()
+
+
+# Get papers by date
+@server.tool(description="Get papers added on a specific date")
+async def get_papers_by_date(added_date: str=Field(description="the data when the user added this paper to the database")) -> List[dict]:
+    cur = server.db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT arxiv_id, title, abstract, authors, published_date,
+                   primary_category, categories, arxiv_url, pdf_file_path,
+                   user_added_date
+            FROM Papers
+            WHERE user_added_date = %s;
+            """,
+            (added_date,)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "arxiv_id":       r[0],
+                "title":          r[1],
+                "abstract":       r[2],
+                "authors":        r[3],
+                "published_date": r[4],
+                "primary_category": r[5],
+                "categories":     r[6],
+                "arxiv_url":      r[7],
+                "pdf_file_path":  r[8],
+                "user_added_date": r[9]
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        server.db_conn.rollback()
+        return {"error": str(e)}
+    finally:
+        cur.close()
+
+
+# Get papers by category
+@server.tool(description="Get papers by a specific category")
+async def get_papers_by_category(category: str) -> List[dict]:
+    cur = server.db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT arxiv_id, title, abstract, authors, published_date,
+                   primary_category, categories, arxiv_url, pdf_file_path,
+                   user_added_date
+            FROM Papers
+            WHERE %s = ANY(categories);
+            """,
+            (category,)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "arxiv_id":       r[0],
+                "title":          r[1],
+                "abstract":       r[2],
+                "authors":        r[3],
+                "published_date": r[4],
+                "primary_category": r[5],
+                "categories":     r[6],
+                "arxiv_url":      r[7],
+                "pdf_file_path":  r[8],
+                "user_added_date": r[9]
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        server.db_conn.rollback()
+        return {"error": str(e)}
+    finally:
+        cur.close()
+
+
+
 # Check ProjectEmbeddings ordered by project_id (default rows = 20)
-@server.tool()
-async def query_project_stats(limit: int = 20) -> List[dict]:
+@server.tool(description="Get project statistics including project ID, number of assigned papers, and average embedding")
+async def get_project_stats(limit: int = 20) -> List[dict]:
     cur = server.db_conn.cursor()
     cur.execute("""
         SELECT project_id,
@@ -697,9 +717,15 @@ async def query_project_stats(limit: int = 20) -> List[dict]:
         for r in rows
     ]
 
+
+
+
 # Search related papers based on query in a specific project
-@server.tool()
-async def search_related_papers(project_id: int, query: str, top_k: int = 5) -> List[dict]:
+@server.tool(description="When given a user query, search related papers in a specific project.")
+async def search_related_papers(
+    project_id: int=Field(description="ID of the project to search papers in"),
+    query: str=Field(description="User query to search related papers"), 
+    top_k: int = 5) -> List[dict]:
     query_vec = embed_query(query)
 
     cur = server.db_conn.cursor()
@@ -740,6 +766,11 @@ async def search_related_papers(project_id: int, query: str, top_k: int = 5) -> 
         return {"error": str(e)}
     finally:
         cur.close()
+        
+        
+        
+        
+        
 
 if __name__ == "__main__":
     server.run()
