@@ -404,47 +404,54 @@ async def assign_paper_to_specific_project(
     
     # Check if the project exists
     cur = server.db_conn.cursor()
-    cur.execute(
-        """
-        SELECT id FROM Projects WHERE id = %s;
-        """,
-        (project_id,)
-    )
-    project = cur.fetchone()
-    
-    if not project:
-        return {"error": "Project not found"}
-
-    # Check if the paper already exists
-    cur.execute(
-        """
-        SELECT arxiv_id FROM Papers WHERE arxiv_id = %s;
-        """,
-        (arxiv_id,)
-    )
-    paper = cur.fetchone()
-
-    if not paper:
-        # If the paper does not exist, add it
-        metadata = await add_paper_without_assigning_project(arxiv_id)
-        if "error" in metadata:
-            return metadata
-        paper_id = metadata["arxiv_id"]
+    try:
+        cur.execute(
+            """
+            SELECT id FROM Projects WHERE id = %s;
+            """,
+            (project_id,)
+        )
+        project = cur.fetchone()
         
-    else:
-        paper_id = paper[0]
+        if not project:
+            print(f"Project with ID {project_id} does not exist.")
+            return {"error": "Project not found"}
 
-    # Assign the paper to the project
-    cur.execute(
-        """
-        INSERT INTO ProjectPapers (project_id, paper_id)
-        VALUES (%s, %s);
-        """,
-        (project_id, paper_id)
-    )
+        # Check if the paper already exists
+        cur.execute(
+            """
+            SELECT arxiv_id FROM Papers WHERE arxiv_id = %s;
+            """,
+            (arxiv_id,)
+        )
+        paper = cur.fetchone()
 
-    cur.close()
-    server.db_conn.commit()
+        if not paper:
+            # If the paper does not exist, add it
+            metadata = await add_paper_without_assigning_project(arxiv_id)
+            if "error" in metadata:
+                return metadata
+            paper_id = metadata["arxiv_id"]
+            
+        else:
+            paper_id = paper[0]
+
+        # Assign the paper to the project
+        cur.execute(
+            """
+            INSERT INTO ProjectPapers (project_id, paper_id)
+            VALUES (%s, %s);
+            """,
+            (project_id, paper_id)
+        )
+
+        cur.close()
+        print(f"Paper {paper_id} assigned to project {project_id} successfully.")
+        server.db_conn.commit()
+    except Exception as e:
+        server.db_conn.rollback()
+        print(f"Rollback!! Error assigning paper to project: {e}")
+        return {"error": str(e)}
 
     return {"message": "Paper assigned to project successfully", "paper_id": paper_id}
 
