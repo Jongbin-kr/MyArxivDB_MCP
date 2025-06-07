@@ -513,25 +513,25 @@ async def assign_paper_to_closest_project(arxiv_url_or_id: str=Field(description
     return {"message": "Paper assigned to project successfully", "project_id": project[0], "project_name": project[1], "paper_id": paper_id}
 
 
-# Clear database tables
-@server.tool(description="Clear all data from the database tables") 
-async def clear_database() -> str:
-    cur = server.db_conn.cursor()
+# # Clear database tables
+# @server.tool(description="Clear all data from the database tables") 
+# async def clear_database() -> str:
+#     cur = server.db_conn.cursor()
 
-    # Clear ProjectPapers table
-    cur.execute("DELETE FROM ProjectPapers;")
+#     # Clear ProjectPapers table
+#     cur.execute("DELETE FROM ProjectPapers;")
     
-    # Clear Papers table
-    cur.execute("DELETE FROM Papers;")
+#     # Clear Papers table
+#     cur.execute("DELETE FROM Papers;")
     
-    # Clear Projects table
-    cur.execute("DELETE FROM Projects;")
+#     # Clear Projects table
+#     cur.execute("DELETE FROM Projects;")
 
-    cur.close()
+#     cur.close()
 
-    server.db_conn.commit()
+#     server.db_conn.commit()
 
-    return "Database cleared successfully"
+#     return "Database cleared successfully"
 
 
 ################################
