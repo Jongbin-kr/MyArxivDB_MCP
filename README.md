@@ -1,122 +1,85 @@
-# MyArxivDB_MCP MCP server
+# 🧠 BKMS: Organizing Research Papers with MCP Server
 
-A MCP server project
+This repository provides a MCP server to **organize personal research papers** using an **MCP (Modular Command Platform)** server and **semantic search**. The platform enables efficient paper retrieval, automatic project assignment, and assistance in writing literature review sections using LLMs.
 
-
-```
-        "--directory",
-        "/Users/jongbin/MyArxivDB_MCP/data/pdfs",
-```
+This server is mainly designed for Claude Desktop but may also work well with other MCP clients.
 
 
+---
+## ⚡️ Quickstart
 
+> The following quickstart guide is based on an Apple Silicon MacBook.
 
-----
-
-## Components
-
-### Resources
-
-The server implements a simple note storage system with:
-- Custom note:// URI scheme for accessing individual notes
-- Each note resource has a name, description and text/plain mimetype
-
-### Prompts
-
-The server provides a single prompt:
-- summarize-notes: Creates summaries of all stored notes
-  - Optional "style" argument to control detail level (brief/detailed)
-  - Generates prompt combining all current notes with style preference
-
-### Tools
-
-The server implements one tool:
-- add-note: Adds a new note to the server
-  - Takes "name" and "content" as required string arguments
-  - Updates server state and notifies clients of resource changes
-
-## Configuration
-
-[TODO: Add configuration details specific to your implementation]
-
-## Quickstart
-
-### Install
-
-#### Claude Desktop
-
-On MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
-On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
-
-<details>
-  <summary>Development/Unpublished Servers Configuration</summary>
+1. Install uv
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
-  "mcpServers": {
-    "MyArxivDB_MCP": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/Users/jongbin/MyArxivDB_MCP",
-        "run",
-        "MyArxivDB_MCP"
-      ]
-    }
-  }
+  
+2. clone the repository
+  ```bash
+  git clone https://github.com/Jongbin-kr/MyArxivDB_MCP.git
   ```
-</details>
-
-<details>
-  <summary>Published Servers Configuration</summary>
+  
+3. Intsall dependencies & activate the virtual environment
+  ```bash
+  uv sync
+  source /.venv/bin/activate
   ```
-  "mcpServers": {
-    "MyArxivDB_MCP": {
-      "command": "uvx",
-      "args": [
-        "MyArxivDB_MCP"
-      ]
-    }
-  }
+  
+4. set up environment variables at `.env` file.
   ```
-</details>
+  # .env
+  PINECONE_API_KEY = "YOUR PINECONE_API_KEY"
+  DB_NAME = "YOUR_DB_NAME"
+  DB_USER = "YOUR_DB_USERNAME"
+  DB_PASSWORD = "YOUR_DB_PASSWORD"
+  DB_HOST = "localhost"
+  DB_PORT = 4444
+  ```
 
-## Development
+5. Intsall MCP server at Claude Desktop
+   ```bash
+   mcp install server.py
+   ```
 
-### Building and Publishing
-
-To prepare the package for distribution:
-
-1. Sync dependencies and update lockfile:
-```bash
-uv sync
-```
-
-2. Build package distributions:
-```bash
-uv build
-```
-
-This will create source and wheel distributions in the `dist/` directory.
-
-3. Publish to PyPI:
-```bash
-uv publish
-```
-
-Note: You'll need to set PyPI credentials via environment variables or command flags:
-- Token: `--token` or `UV_PUBLISH_TOKEN`
-- Or username/password: `--username`/`UV_PUBLISH_USERNAME` and `--password`/`UV_PUBLISH_PASSWORD`
-
-### Debugging
-
-Since MCP servers run over stdio, debugging can be challenging. For the best debugging
-experience, we strongly recommend using the [MCP Inspector](https://github.com/modelcontextprotocol/inspector).
+6. Done! The Claude desktop app will automatically detect the MCP server and you can start using i!
 
 
-You can launch the MCP Inspector via [`npm`](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) with this command:
-
-```bash
-npx @modelcontextprotocol/inspector uv --directory /Users/jongbin/MyArxivDB_MCP run myarxivdb-mcp
-```
 
 
-Upon launching, the Inspector will display a URL that you can access in your browser to begin debugging.
+---
+
+## 📌 Motivation
+
+Researchers frequently accumulate large numbers of papers but lack tools to systematically organize them by topic or project. BKMS aims to:
+
+- Automatically assign new papers to relevant projects using embeddings
+- Allow semantic search for project-specific literature
+- Assist in drafting sections like “Related Work” using LLMs
+
+---
+
+## 🛠️ Main functions
+
+Our MCP server supports the following core capabilities:
+
+- **Crawling** metadata and PDFs from arXiv using ID or URL using ArXiv API
+- **Embedding** abstracts using Pinecone API(`llama-text-embed-v2`)
+- **Storing** papers and projects in a PostgreSQL + pgvector DB
+- **Generating** "Related Work" sections via LLM prompts
+
+---
+
+## 🎥 Workflow & Demo video
+You can see our PPT and demo video in assets folder.
+
+Brief overview of our project workflow and DB schema is as follows. 
+
+
+---
+
+## 👨‍👩‍👧‍👦 Team
+
+- 박연진
+- 원종빈
+- 정예준

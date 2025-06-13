@@ -741,31 +741,6 @@ async def get_papers_by_category(category: str) -> List[dict]:
 
 
 
-# Check ProjectEmbeddings ordered by project_id (default rows = 20)
-@server.tool(description="Get project statistics including project ID, number of assigned papers, and average embedding")
-async def get_project_stats(limit: int = 20) -> List[dict]:
-    cur = server.db_conn.cursor()
-    cur.execute("""
-        SELECT project_id,
-               num_assigned_papers,
-               avg_embedding::text
-        FROM   ProjectEmbeddings
-        ORDER  BY project_id
-        LIMIT  %s;
-    """, (limit,))
-    rows = cur.fetchall()
-    cur.close()
-    return [
-        {
-            "project_id":            r[0],
-            "num_assigned_papers":   r[1],
-            "avg_embedding":         r[2]
-        }
-        for r in rows
-    ]
-
-
-
 
 # Search related papers based on query in a specific project
 @server.tool(description="When given a user query, search related papers in a specific project.")
