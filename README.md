@@ -1,10 +1,11 @@
-# 🧠 BKMS: Organizing Research Papers with MCP Server
+# 🧠 Organizing Research Papers with MCP Server
 
 This repository provides a MCP server to **organize personal research papers** using an **MCP (Modular Command Platform)** server and **semantic search**. The platform enables efficient paper retrieval, automatic project assignment, and assistance in writing literature review sections using LLMs.
 
 This server is mainly designed for Claude Desktop but may also work well with other MCP clients.
 
-
+This project was carried out as part of the term project for the BKMS1 course(@SNU GSDS).
+ 
 ---
 ## ⚡️ Quickstart
 
@@ -74,6 +75,8 @@ Our MCP server supports the following core capabilities:
 You can see our PPT and demo video in assets folder.
 
 Brief overview of our project workflow and DB schema is as follows. 
+![workflow](https://github.com/Jongbin-kr/MyArxivDB_MCP/blob/main/assets/workflow.png)
+![DB-schema](https://github.com/Jongbin-kr/MyArxivDB_MCP/blob/main/assets/DB-schema.png)
 
 
 ---
